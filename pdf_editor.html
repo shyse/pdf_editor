@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF編集ツール</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    header {
+      background-color: #4CAF50;
+      color: white;
+      width: 100%;
+      text-align: center;
+      padding: 1rem;
+      font-size: 1.5rem;
+    }
+    #drop-zone {
+      border: 2px dashed #4CAF50;
+      border-radius: 10px;
+      padding: 2rem;
+      margin: 1rem;
+      text-align: center;
+      color: #4CAF50;
+      cursor: pointer;
+    }
+    #thumbnails {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin: 1rem;
+    }
+    .thumbnail-container {
+      position: relative;
+      width: 220px;
+      height: 320px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      border: 1px solid #ccc;
+      padding: 0.5rem;
+      border-radius: 5px;
+      background-color: white;
+      overflow: hidden;
+      box-sizing: border-box;
+      text-align: center;
+    }
+    .thumbnail-image-wrapper {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .thumbnail {
+      transition: transform 0.3s ease;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .thumbnail .buttons {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem;
+      box-sizing: border-box;
+    }
+    .thumbnail .buttons button {
+      width: 45%;
+    }
+    .thumbnail.dragging {
+      opacity: 0.5;
+    }
+    #output-btn {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 1rem;
+      font-size: 1rem;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    #output-btn:hover {
+      background-color: #45a049;
+    }
+    .page-number {
+      position: absolute;
+      top: 5px;
+      left: 5px;
+      background-color: rgba(0, 0, 0, 0.5);
+      color: white;
+      padding: 2px 5px;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <header>PDF編集ツール</header>
+  <div id="drop-zone">ここにPDFをドラッグ＆ドロップしてください<br>またはクリックしてファイルを選択</div>
+  <div id="thumbnails"></div>
+  <button id="output-btn">結合して出力する</button>
+
+  <script>
+    const dropZone = document.getElementById('drop-zone');
+    const thumbnailsContainer = document.getElementById('thumbnails');
+    const outputButton = document.getElementById('output-btn');
+    let loadedPages = []; // PDFのページ情報を保持
+    let draggedIndex = null; // ドラッグ操作中のページインデックスを保持
+
+    // PDFを読み込み、サムネイルを作成
+    async function handleFiles(files) {
+      for (const file of files) {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+        for (let i = 0; i < pdfDoc.numPages; i++) {
+          const page = await pdfDoc.getPage(i + 1);
+          const viewport = page.getViewport({ scale: 0.5 });
+
+          // 回転角度を取得（pdf.jsでの回転状態をそのまま取得）
+          const rotation = page.rotate || 0;
+
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          await page.render({ canvasContext: context, viewport }).promise;
+
+          // PDFのページデータと回転情報を保持
+          loadedPages.push({
+            pdfDoc,
+            pageIndex: i,
+            rotation: rotation, // PDFページの回転情報
+            canvas: canvas,
+            thumbnailRotation: 0, // サムネイルの回転情報は0
+            arrayBuffer: arrayBuffer,
+          });
+          
+          // サムネイルを描画
+          renderThumbnail(canvas, loadedPages.length - 1);
+        }
+      }
+    }
+
+    // サムネイルを描画
+    function renderThumbnail(canvas, index) {
+      const thumbnailDiv = document.createElement('div');
+      thumbnailDiv.className = 'thumbnail-container';
+      thumbnailDiv.draggable = true;
+      thumbnailDiv.dataset.index = index;
+
+      // サムネイル画像の描画領域
+      const imageWrapper = document.createElement('div');
+      imageWrapper.className = 'thumbnail-image-wrapper';
+
+      const img = document.createElement('img');
+      img.src = canvas.toDataURL();
+      img.className = 'thumbnail';
+
+      // サムネイルにはPDFの回転を反映させないように、サムネイルごとの回転情報を使う
+      const rotation = loadedPages[index].thumbnailRotation;
+      img.style.transform = `rotate(${rotation}deg)`; // サムネイルの回転を反映
+
+      imageWrapper.appendChild(img);
+      thumbnailDiv.appendChild(imageWrapper);
+
+      // ページ番号を表示
+      const pageNumber = document.createElement('div');
+      pageNumber.className = 'page-number';
+      pageNumber.textContent = index + 1; // 通し番号を表示
+      thumbnailDiv.appendChild(pageNumber);
+
+      // ドラッグイベント
+      thumbnailDiv.addEventListener('dragstart', (e) => {
+        draggedIndex = index;
+        e.dataTransfer.effectAllowed = 'move';
+        thumbnailDiv.classList.add('dragging');
+      });
+
+      thumbnailDiv.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+
+      thumbnailDiv.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (draggedIndex !== null && draggedIndex !== index) {
+          const draggedItem = loadedPages[draggedIndex];
+          loadedPages.splice(draggedIndex, 1);
+          loadedPages.splice(index, 0, draggedItem);
+          renderAllThumbnails();
+        }
+        draggedIndex = null;
+      });
+
+      thumbnailDiv.addEventListener('dragend', () => {
+        thumbnailDiv.classList.remove('dragging');
+        draggedIndex = null;
+      });
+
+      // 回転ボタン
+      const rotateButton = document.createElement('button');
+      rotateButton.textContent = '回転';
+      rotateButton.addEventListener('click', () => {
+        // サムネイルの回転情報を更新
+        loadedPages[index].thumbnailRotation = (loadedPages[index].thumbnailRotation + 90) % 360; 
+        // PDFページの回転情報も同期して更新
+        loadedPages[index].rotation = (loadedPages[index].rotation + 90) % 360; 
+        img.style.transform = `rotate(${loadedPages[index].thumbnailRotation}deg)`; // 表示を更新
+        resizeThumbnailImage(index); // 回転後の画像を再リサイズ
+      });
+
+      // 削除ボタン
+      const deleteButton = document.createElement('button');
+      deleteButton.textContent = '削除';
+      deleteButton.addEventListener('click', () => {
+        loadedPages.splice(index, 1); // 指定したページを削除
+        renderAllThumbnails(); // 再描画
+      });
+
+      const buttonDiv = document.createElement('div');
+      buttonDiv.className = 'buttons';
+      buttonDiv.appendChild(rotateButton);
+      buttonDiv.appendChild(deleteButton);
+      thumbnailDiv.appendChild(buttonDiv);
+
+      thumbnailsContainer.appendChild(thumbnailDiv);
+    }
+
+    // 全サムネイルを再描画
+    function renderAllThumbnails() {
+      thumbnailsContainer.innerHTML = ''; // サムネイルのクリア
+      loadedPages.forEach((_, index) => {
+        const canvas = loadedPages[index].canvas; // 正しいキャンバスを使用
+        renderThumbnail(canvas, index); // 再描画
+      });
+    }
+
+    // 回転後にサムネイル画像が枠に収まるようにリサイズ
+    function resizeThumbnailImage(index) {
+      const canvas = loadedPages[index].canvas;
+      const img = document.querySelectorAll('.thumbnail')[index];
+
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+
+      // サムネイル描画エリアのサイズ
+      const maxWidth = 220;  // 最大幅
+      const maxHeight = 320; // 最大高さ
+
+      // 回転後の画像の幅と高さを計算
+      const rotatedWidth = Math.abs(Math.cos(loadedPages[index].thumbnailRotation * Math.PI / 180)) * imgWidth + Math.abs(Math.sin(loadedPages[index].thumbnailRotation * Math.PI / 180)) * imgHeight;
+      const rotatedHeight = Math.abs(Math.sin(loadedPages[index].thumbnailRotation * Math.PI / 180)) * imgWidth + Math.abs(Math.cos(loadedPages[index].thumbnailRotation * Math.PI / 180)) * imgHeight;
+
+      // 最大サイズに収めるようにリサイズ
+      const scale = Math.min(maxWidth / rotatedWidth, maxHeight / rotatedHeight);
+      img.style.width = `${rotatedWidth * scale}px`;
+      img.style.height = `${rotatedHeight * scale}px`;
+    }
+
+    // PDFを結合して出力
+    outputButton.addEventListener('click', async () => {
+      const pdfDoc = await PDFLib.PDFDocument.create();
+
+      for (const pageData of loadedPages) {
+        const srcPdf = await PDFLib.PDFDocument.load(pageData.arrayBuffer);
+        const [copiedPage] = await pdfDoc.copyPages(srcPdf, [pageData.pageIndex]);
+        copiedPage.setRotation(PDFLib.degrees(pageData.rotation)); // PDFページの回転を反映
+        pdfDoc.addPage(copiedPage);
+      }
+
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'edited.pdf';
+      link.click();
+    });
+
+    // ドロップゾーンの動作
+    dropZone.addEventListener('click', () => {
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = 'application/pdf';
+      fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+      fileInput.click();
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = '#45a049';
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.style.borderColor = '#4CAF50';
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      handleFiles(e.dataTransfer.files);
+    });
+  </script>
+</body>
+</html>
