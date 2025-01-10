@@ -6,6 +6,9 @@
   <title>PDF Editor</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+  </script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -121,13 +124,30 @@
       max-width: 95%;
       max-height: 95%;
     }
+    #progress-bar {
+      width: 100%;
+      background-color: #f3f3f3;
+      border-radius: 5px;
+      margin: 1rem 0;
+      display: none;
+    }
+    #progress-bar div {
+      height: 20px;
+      width: 0;
+      background-color: #4CAF50;
+      border-radius: 5px;
+      text-align: center;
+      line-height: 20px;
+      color: white;
+    }
   </style>
 </head>
 <body>
   <header>PDF編集ツール</header>
   <div id="drop-zone">ここにPDFをドラッグ＆ドロップしてください<br>またはクリックしてファイルを選択</div>
-  <div id="thumbnails"></div>
   <button id="output-btn">結合して出力する</button>
+  <div id="progress-bar"><div></div></div>
+  <div id="thumbnails"></div>
   <div id="overlay" class="overlay">
     <img id="overlay-img" src="" alt="拡大画像">
   </div>
@@ -141,7 +161,13 @@
 
     // PDFを読み込み、サムネイルを作成
     async function handleFiles(files) {
-      for (const file of files) {
+      const progressBar = document.getElementById('progress-bar');
+      const progressBarInner = progressBar.querySelector('div');
+      progressBar.style.display = 'block';
+      progressBarInner.style.width = '0%';
+
+      for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+        const file = files[fileIndex];
         const arrayBuffer = await file.arrayBuffer();
         const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
@@ -179,8 +205,15 @@
           
           // サムネイルを描画
           renderThumbnail(canvas, loadedPages.length - 1);
+
+          // 進捗バーの更新
+          const progress = ((fileIndex * pdfDoc.numPages + i + 1) / (files.length * pdfDoc.numPages)) * 100;
+          progressBarInner.style.width = `${progress}%`;
+          progressBarInner.textContent = `${Math.round(progress)}%`;
         }
       }
+
+      progressBar.style.display = 'none'; // 進捗バーを非表示に
     }
 
     // サムネイルを描画
@@ -310,13 +343,24 @@
 
     // PDFを結合して出力
     outputButton.addEventListener('click', async () => {
+      const progressBar = document.getElementById('progress-bar');
+      const progressBarInner = progressBar.querySelector('div');
+      progressBar.style.display = 'block';
+      progressBarInner.style.width = '0%';
+
       const pdfDoc = await PDFLib.PDFDocument.create();
 
-      for (const pageData of loadedPages) {
+      for (let i = 0; i < loadedPages.length; i++) {
+        const pageData = loadedPages[i];
         const srcPdf = await PDFLib.PDFDocument.load(pageData.arrayBuffer);
         const [copiedPage] = await pdfDoc.copyPages(srcPdf, [pageData.pageIndex]);
         copiedPage.setRotation(PDFLib.degrees(pageData.rotation)); // PDFページの回転を反映
         pdfDoc.addPage(copiedPage);
+
+        // 進捗バーの更新
+        const progress = ((i + 1) / loadedPages.length) * 100;
+        progressBarInner.style.width = `${progress}%`;
+        progressBarInner.textContent = `${Math.round(progress)}%`;
       }
 
       const pdfBytes = await pdfDoc.save();
@@ -325,6 +369,8 @@
       link.href = URL.createObjectURL(blob);
       link.download = 'edited.pdf';
       link.click();
+
+      progressBar.style.display = 'none'; // 進捗バーを非表示に
     });
 
     // ドロップゾーンの動作
